@@ -1,0 +1,4 @@
+Flask==2.2.3
+flask-cors==3.0.10
+groq==0.4.2
+python-dotenv==1.0.1   

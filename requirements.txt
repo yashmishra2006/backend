@@ -15,9 +15,6 @@ decorator==5.2.1
 distro==1.9.0
 dotenv==0.9.9
 ffmpeg==1.4
-filelock==3.18.0
-Flask==3.1.0
-flask-cors==5.0.1
 fsspec==2025.3.2
 groq==0.22.0
 h11==0.14.0

@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+*.mp4
+*.wav
+*.zip
+temp_audio_files/
+.whisper/
+.env
+.venv/
+*.pt
+*.bin

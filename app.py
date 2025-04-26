@@ -11,24 +11,10 @@ import whisper
 from PIL import Image
 import torchvision.transforms as transforms
 from torchvision.models import resnet50, ResNet50_Weights
-from dotenv import load_dotenv
-
-# Set the path to ffmpeg binary
-os.environ["PATH"] += os.pathsep + r"C:\Program Files\ffmpeg-7.1.1\bin"
-
-# Load environment variables
-load_dotenv()
-
-import logging
-
 
 
 # Initialize Flask app
-app = Flask(__name__, static_folder='../dist', static_url_path='')
-
-# Set up logging
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
+app = Flask(__name__)
 
 whisper_model = whisper.load_model("base")
 
@@ -212,8 +198,6 @@ def analyze_url():
                 'highlights': analysis['highlights']
             }
         }
-
-        logger.info(f"🔍 URL Analysis Result: {result}")
         
         analysis_results[analysis_id] = result
         
@@ -231,7 +215,6 @@ def analyze_url():
 @app.route("/api/analyze/audio", methods=["POST"])
 def analyze_audio():
     try:
-        logger.info("🎤 Audio analysis request received")
 
         if 'file' not in request.files:
             return jsonify({"error": "No audio file uploaded"}), 400
@@ -244,9 +227,6 @@ def analyze_audio():
         file_path = os.path.join(temp_dir, filename)
         audio_file.save(file_path)
         analysis_id = str(uuid.uuid4())
-
-        logger.info(f"📁 Temporary file saved at: {file_path}")
-        logger.info(f"📂 File exists: {os.path.exists(file_path)}")
 
         # Add ffmpeg to PATH
         os.environ["PATH"] += os.pathsep + r"C:\path\to\ffmpeg\bin"
@@ -262,7 +242,6 @@ def analyze_audio():
         results = whisper.decode(model, mel, options)
 
         transcription = results.text.strip()
-        logger.info(f"📝 Transcription: {transcription}")
 
         # Analyze with Groq
         analysis = analyze_with_groq(transcription, content_type="audio")
@@ -280,14 +259,14 @@ def analyze_audio():
                 'highlights': analysis['highlights']
             }
         }
-        logger.info(f"🔍 Audio Analysis Result: {result}")
+
         analysis_results[analysis_id] = result
         return jsonify({
             'success': True,
             'result': result
         })
     except Exception as e:
-        logger.error("❌ Error during audio analysis:\n%s", traceback.format_exc())
+    
         return jsonify({"error": "Internal Server Error"}), 500
     finally:
         if os.path.exists(file_path):
@@ -368,5 +347,3 @@ def get_result(analysis_id):
     })
 
     
-if __name__ == '__main__':
-    app.run(debug=True, port=5000)

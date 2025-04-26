@@ -11,10 +11,17 @@ import whisper
 from PIL import Image
 import torchvision.transforms as transforms
 from torchvision.models import resnet50, ResNet50_Weights
+from dotenv import load_dotenv
 
+# Set the path to ffmpeg binary
+os.environ["PATH"] += os.pathsep + r"C:\Program Files\ffmpeg-7.1.1\bin"
+
+# Load environment variables
+load_dotenv()
 
 # Initialize Flask app
 app = Flask(__name__)
+
 
 whisper_model = whisper.load_model("base")
 
@@ -198,6 +205,7 @@ def analyze_url():
                 'highlights': analysis['highlights']
             }
         }
+
         
         analysis_results[analysis_id] = result
         
@@ -216,6 +224,7 @@ def analyze_url():
 def analyze_audio():
     try:
 
+
         if 'file' not in request.files:
             return jsonify({"error": "No audio file uploaded"}), 400
 
@@ -227,6 +236,7 @@ def analyze_audio():
         file_path = os.path.join(temp_dir, filename)
         audio_file.save(file_path)
         analysis_id = str(uuid.uuid4())
+
 
         # Add ffmpeg to PATH
         os.environ["PATH"] += os.pathsep + r"C:\path\to\ffmpeg\bin"
@@ -242,7 +252,6 @@ def analyze_audio():
         results = whisper.decode(model, mel, options)
 
         transcription = results.text.strip()
-
         # Analyze with Groq
         analysis = analyze_with_groq(transcription, content_type="audio")
 
@@ -266,7 +275,7 @@ def analyze_audio():
             'result': result
         })
     except Exception as e:
-    
+
         return jsonify({"error": "Internal Server Error"}), 500
     finally:
         if os.path.exists(file_path):
@@ -346,4 +355,5 @@ def get_result(analysis_id):
         'result': analysis_results[analysis_id]
     })
 
+    
     

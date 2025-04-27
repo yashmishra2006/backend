@@ -7,23 +7,14 @@ import torch
 import os
 import traceback
 import uuid
-import whisper
 from PIL import Image
 import torchvision.transforms as transforms
 from torchvision.models import resnet50, ResNet50_Weights
-from dotenv import load_dotenv
-
-# Set the path to ffmpeg binary
-os.environ["PATH"] += os.pathsep + r"C:\Program Files\ffmpeg-7.1.1\bin"
-
-# Load environment variables
-load_dotenv()
+import logging
 
 # Initialize Flask app
 app = Flask(__name__)
 
-
-whisper_model = whisper.load_model("base")
 
 # Directory to store temporary audio files
 TEMP_DIR = os.path.join(os.getcwd(), 'temp_audio_files')
@@ -44,6 +35,8 @@ CORS(app)
 # Groq API key (replace with yours securely in real deployment)
 GROQ_API_KEY = "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"
 
+ASSEMBLYAI_API_KEY="44b4b6ca73d3421c8e27ab64e32660ac"
+
 # Endpoint
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
@@ -53,6 +46,7 @@ analysis_results = {}
 import re
 import json
 import requests
+
 
 def extract_json(text):
     try:
@@ -223,8 +217,6 @@ def analyze_url():
 @app.route("/api/analyze/audio", methods=["POST"])
 def analyze_audio():
     try:
-
-
         if 'file' not in request.files:
             return jsonify({"error": "No audio file uploaded"}), 400
 
@@ -235,26 +227,56 @@ def analyze_audio():
         filename = f"{uuid.uuid4()}.wav"
         file_path = os.path.join(temp_dir, filename)
         audio_file.save(file_path)
-        analysis_id = str(uuid.uuid4())
 
+        # Check if file exists
+        if not os.path.exists(file_path):
+            raise Exception(f"File does not exist: {file_path}")
 
-        # Add ffmpeg to PATH
-        os.environ["PATH"] += os.pathsep + r"C:\path\to\ffmpeg\bin"
+        # Upload the audio file to AssemblyAI
+        headers = {'authorization': ASSEMBLYAI_API_KEY}
+        with open(file_path, 'rb') as f:
+            upload_response = requests.post(
+                "https://api.assemblyai.com/v2/upload", 
+                headers=headers, 
+                files={'file': f}
+            )
+        upload_response.raise_for_status()
+        audio_url = upload_response.json()['upload_url']
 
-        # Load Whisper model and transcribe audio
-        audio = whisper.load_audio(file_path)
-        audio = whisper.pad_or_trim(audio)
-        model = whisper.load_model("base")
-        mel = whisper.log_mel_spectrogram(audio).to(model.device)
-        
-        # Perform transcription
-        options = whisper.DecodingOptions(language="en")
-        results = whisper.decode(model, mel, options)
+        # Request transcription from AssemblyAI
+        transcribe_headers = {
+            'authorization': ASSEMBLYAI_API_KEY,
+            'content-type': 'application/json'
+        }
+        transcribe_data = {'audio_url': audio_url}
+        transcribe_response = requests.post(
+            "https://api.assemblyai.com/v2/transcript",
+            headers=transcribe_headers,
+            json=transcribe_data
+        )
+        transcribe_response.raise_for_status()
+        transcript_id = transcribe_response.json()['id']
 
-        transcription = results.text.strip()
+        # Poll for transcription result
+        polling_url = f"https://api.assemblyai.com/v2/transcript/{transcript_id}"
+        while True:
+            poll_response = requests.get(polling_url, headers={'authorization': ASSEMBLYAI_API_KEY})
+            poll_response.raise_for_status()
+            status = poll_response.json()['status']
+
+            if status == 'completed':
+                text = poll_response.json()['text']
+                break
+            elif status == 'failed':
+                raise Exception(f"Transcription failed: {poll_response.json()}")
+            else:
+                time.sleep(3)
+
         # Analyze with Groq
-        analysis = analyze_with_groq(transcription, content_type="audio")
+        analysis = analyze_with_groq(text, content_type="audio")
 
+        # Prepare the result
+        analysis_id = str(uuid.uuid4())
         result = {
             'id': analysis_id,
             'type': "audio",
@@ -269,15 +291,23 @@ def analyze_audio():
             }
         }
 
+        # Store analysis results (assuming a dictionary `analysis_results` is defined elsewhere)
         analysis_results[analysis_id] = result
+
+        # Return the analysis result as a JSON response
         return jsonify({
             'success': True,
             'result': result
         })
-    except Exception as e:
 
-        return jsonify({"error": "Internal Server Error"}), 500
+    except requests.exceptions.RequestException as e:
+        # Catch errors related to HTTP requests (e.g., upload or transcription requests)
+        return jsonify({"error": f"Request failed: {str(e)}"}), 500
+    except Exception as e:
+        # Catch any other errors
+        return jsonify({"error": "Internal Server Error", "message": str(e)}), 500
     finally:
+        # Cleanup: Remove temporary file
         if os.path.exists(file_path):
             os.remove(file_path)
 

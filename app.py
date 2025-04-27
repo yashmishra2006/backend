@@ -6,7 +6,6 @@ import json
 import os
 import traceback
 import uuid
-from PIL import Image
 import logging
 
 # Initialize Flask app

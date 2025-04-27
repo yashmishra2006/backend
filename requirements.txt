@@ -3,5 +3,4 @@ flask-cors
 requests
 python-dotenv
 logging
-os
 gunicorn

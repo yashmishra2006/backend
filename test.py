@@ -1,81 +1,219 @@
-import os
-import time
-import uuid
 import requests
+from flask import Flask, request, jsonify, send_from_directory
+from flask_cors import CORS
+import time
+import json
+import torch
+import os
 import traceback
+import uuid
+import logging
 
-# AssemblyAI API Key
-ASSEMBLYAI_API_KEY = "44b4b6ca73d3421c8e27ab64e32660ac"
+# Initialize Flask app
+app = Flask(__name__)
 
-# AssemblyAI Endpoints
-ASSEMBLY_UPLOAD_URL = "https://api.assemblyai.com/v2/upload"
-ASSEMBLY_TRANSCRIBE_URL = "https://api.assemblyai.com/v2/transcript"
 
-# ---- Helper Functions ----
+# Directory to store temporary audio files
+TEMP_DIR = os.path.join(os.getcwd(), 'temp_audio_files')
 
-def upload_audio(file_path):
-    print(f"[DEBUG] Uploading file: {file_path}")
-    headers = {'authorization': ASSEMBLYAI_API_KEY}
-    with open(file_path, 'rb') as f:
-        response = requests.post(ASSEMBLY_UPLOAD_URL, headers=headers, files={'file': f})
-    print(f"[DEBUG] Upload status code: {response.status_code}")
-    response.raise_for_status()
-    return response.json()['upload_url']
+# Ensure the temporary directory exists
+os.makedirs(TEMP_DIR, exist_ok=True)
 
-def request_transcription(audio_url):
-    print(f"[DEBUG] Requesting transcription for: {audio_url}")
-    headers = {
-        'authorization': ASSEMBLYAI_API_KEY,
-        'content-type': 'application/json'
-    }
-    data = {'audio_url': audio_url}
-    response = requests.post(ASSEMBLY_TRANSCRIBE_URL, headers=headers, json=data)
-    print(f"[DEBUG] Transcription request status: {response.status_code}")
-    response.raise_for_status()
-    return response.json()['id']
 
-def get_transcription_result(transcript_id):
-    print(f"[DEBUG] Polling transcription for ID: {transcript_id}")
-    headers = {'authorization': ASSEMBLYAI_API_KEY}
-    polling_endpoint = f"{ASSEMBLY_TRANSCRIBE_URL}/{transcript_id}"
+CORS(app)
 
-    while True:
-        response = requests.get(polling_endpoint, headers=headers)
-        print(f"[DEBUG] Polling status: {response.status_code}")
-        response.raise_for_status()
-        status = response.json()['status']
-        print(f"[DEBUG] Current transcription status: {status}")
+# Groq API key (replace with yours securely in real deployment)
+GROQ_API_KEY = "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"
 
-        if status == 'completed':
-            return response.json()['text']
-        elif status == 'failed':
-            raise Exception(f"Transcription failed: {response.json()}")
-        else:
-            time.sleep(3)
+ASSEMBLYAI_API_KEY="44b4b6ca73d3421c8e27ab64e32660ac"
 
-# ---- Main Execution ----
+# Endpoint
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-if __name__ == "__main__":
+# In-memory storage
+analysis_results = {}
+
+import re
+import json
+import requests
+
+
+def extract_json(text):
     try:
-        # 1. Set your local file path here
-        file_path = r"C:\Users\yash4\Desktop\backend\audio.mp3"  # <-- Change if needed
+        # Remove triple backticks and optional language specifier
+        cleaned = text.strip().strip("```json").strip("```").strip()
+        return json.loads(cleaned)
+    except Exception:
+        # Fallback: extract JSON-like block using regex
+        match = re.search(r'\{.*\}', text, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group())
+            except Exception as e:
+                print("❌ Still failed parsing fallback JSON:", e)
+        return None
 
-        if not os.path.exists(file_path):
-            raise Exception(f"File does not exist: {file_path}")
+def analyze_with_groq(content, content_type):
+    prompt = f"""You are a threat analysis expert. Analyze the following {content_type} content and provide a detailed threat assessment:
 
-        # 2. Upload the file
-        audio_url = upload_audio(file_path)
-        print(f"[INFO] Audio file uploaded to: {audio_url}")
+Content: {content}
 
-        # 3. Request transcription
-        transcript_id = request_transcription(audio_url)
-        print(f"[INFO] Transcript request ID: {transcript_id}")
+Provide your analysis in the following JSON format:
+{{
+    "threat_level": "safe|suspicious|dangerous",
+    "score": 0.0-1.0,
+    "summary": "detailed explanation",
+    "confidence": 0.0-1.0,
+    "categories": ["category1", "category2"],
+    "highlights": [
+        {{"text": "specific concerning elements"}}
+    ]
+}}"""
 
-        # 4. Poll for result
-        transcription_text = get_transcription_result(transcript_id)
-        print("\n=== Final Transcription ===\n")
-        print(transcription_text)
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
 
+    data = {
+        "model": "mistral-saba-24b",
+        "messages": [
+            {"role": "system", "content": "You are a threat analysis AI specializing in detecting security threats, malicious content, and potential risks."},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.1,
+        "max_tokens": 1000,
+        "top_p": 1,
+        "stream": False
+    }
+
+    response = requests.post(GROQ_API_URL, headers=headers, json=data)
+    print("🔍 Groq API Raw Response:")
+    print(json.dumps(response.json(), indent=4))
+
+    if response.status_code == 200:
+        try:
+            result = response.json()
+            content = result['choices'][0]['message']['content']
+            parsed = extract_json(content)
+
+            if parsed is not None:
+                return parsed
+            else:
+                raise ValueError("Failed to extract JSON from response")
+
+        except Exception as e:
+            print("❌ Error parsing Groq response:", e)
+            return {
+                "threat_level": "suspicious",
+                "score": 0.6,
+                "summary": "Unable to parse response from Groq.",
+                "confidence": 0.5,
+                "categories": ["ParsingError"],
+                "highlights": []
+            }
+
+    return {
+        "threat_level": "suspicious",
+        "score": 0.8,
+        "summary": "Groq API call failed.",
+        "confidence": 0.4,
+        "categories": ["APIError"],
+        "highlights": []
+    }
+
+
+
+
+@app.route('/api/analyze/text', methods=['POST'])
+def analyze_text():
+    """Endpoint for text threat analysis"""
+    if not request.json or not 'text' in request.json:
+        return jsonify({'success': False, 'error': 'No text provided'}), 400
+    
+    text = request.json['text']
+    analysis_id = str(uuid.uuid4())
+    
+    try:
+        analysis = analyze_with_groq(text, "text")
+        print(f"Analysis ID: {analysis_id}, Analysis Result: {analysis}")
+        
+        result = {
+            'id': analysis_id,
+            'type': 'text',
+            'timestamp': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+            'score': analysis['score'],
+            'threat_level': analysis['threat_level'],
+            'details': {
+                'summary': analysis['summary'],
+                'confidence': analysis['confidence'],
+                'categories': analysis['categories'],
+                'highlights': analysis['highlights']
+            }
+        }
+        
+        analysis_results[analysis_id] = result
+        
+        return jsonify({
+            'success': True,
+            'result': result
+        })
     except Exception as e:
-        print("[EXCEPTION] Something went wrong!")
-        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/analyze/url', methods=['POST'])
+def analyze_url():
+    """Endpoint for URL threat analysis"""
+    if not request.json or not 'url' in request.json:
+        return jsonify({'success': False, 'error': 'No URL provided'}), 400
+    
+    url = request.json['url']
+    analysis_id = str(uuid.uuid4())
+    
+    try:
+        analysis = analyze_with_groq(url, "URL")
+        
+        result = {
+            'id': analysis_id,
+            'type': 'url',
+            'timestamp': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+            'score': analysis['score'],
+            'threat_level': analysis['threat_level'],
+            'details': {
+                'summary': analysis['summary'],
+                'confidence': analysis['confidence'],
+                'categories': analysis['categories'],
+                'highlights': analysis['highlights']
+            }
+        }
+
+        
+        analysis_results[analysis_id] = result
+        
+        return jsonify({
+            'success': True,
+            'result': result
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+    
+
+
+@app.route('/api/results/<analysis_id>', methods=['GET'])
+def get_result(analysis_id):
+    """Retrieve a specific analysis result"""
+    if analysis_id not in analysis_results:
+        return jsonify({'success': False, 'error': 'Analysis result not found'}), 404
+    
+    return jsonify({
+        'success': True,
+        'result': analysis_results[analysis_id]
+    })
+
+    

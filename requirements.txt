@@ -1,6 +1,6 @@
 Flask
 flask-cors
 requests
-python-dotenv
-logging
-gunicorn
+torch
+torchvision
+Pillow

@@ -5,4 +5,4 @@ python-dotenv
 torch
 torchvision
 Pillow
-git+https://github.com/openai/whisper.git
+

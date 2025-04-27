@@ -4,3 +4,4 @@ requests
 torch
 torchvision
 Pillow
+gunicorn
